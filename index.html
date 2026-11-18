@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detector de doenças: soja e milho</title>
+<style>
+  :root {
+    --verde: #2f6b3a; --verde-claro: #e8f2ea; --texto: #1f2a22; --cinza: #6b756d;
+    --borda: #dde5df; --fundo: #f6f8f6; --alerta: #b4561d; --alerta-claro: #fbeee5;
+    --ok: #2f7d4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--fundo); color: var(--texto); line-height: 1.45;
+  }
+  header { background: var(--verde); color: #fff; padding: 22px 20px 26px; }
+  header h1 { margin: 0; font-size: 1.35rem; }
+  header p { margin: 6px 0 0; opacity: .85; font-size: .93rem; }
+  main { max-width: 560px; margin: -14px auto 40px; padding: 0 14px; }
+  .card {
+    background: #fff; border: 1px solid var(--borda); border-radius: 14px;
+    padding: 18px; margin-bottom: 14px;
+  }
+  .botoes { display: flex; gap: 10px; }
+  .btn {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 13px 12px; border-radius: 10px; font-size: 1rem; font-weight: 600;
+    border: 1.5px solid var(--verde); color: var(--verde); background: #fff; cursor: pointer;
+  }
+  .btn.primario { background: var(--verde); color: #fff; width: 100%; margin-top: 14px; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  input[type=file] { display: none; }
+  #previa {
+    display: none; width: 100%; max-height: 320px; object-fit: contain;
+    border-radius: 10px; margin-top: 14px; background: #eef2ef;
+  }
+  .dica { color: var(--cinza); font-size: .88rem; margin: 12px 0 0; }
+  #carregando { display: none; text-align: center; color: var(--cinza); padding: 8px 0; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 8px; border-radius: 50%;
+    border: 3px solid var(--verde-claro); border-top-color: var(--verde);
+    animation: gira .8s linear infinite;
+  }
+  @keyframes gira { to { transform: rotate(360deg); } }
+  #resultado { display: none; }
+  .etiqueta {
+    display: inline-block; font-size: .78rem; font-weight: 700; letter-spacing: .02em;
+    padding: 3px 9px; border-radius: 99px; text-transform: uppercase;
+  }
+  .etiqueta.doente { background: var(--alerta-claro); color: var(--alerta); }
+  .etiqueta.saudavel { background: var(--verde-claro); color: var(--ok); }
+  .etiqueta.incerto { background: #eef0f2; color: #555; }
+  h2 { margin: 10px 0 2px; font-size: 1.3rem; }
+  .agente { color: var(--cinza); font-style: italic; font-size: .9rem; margin: 0; }
+  .confianca { margin: 14px 0 4px; font-size: .9rem; color: var(--cinza); }
+  .barra { height: 8px; background: #edf1ee; border-radius: 99px; overflow: hidden; }
+  .barra > span { display: block; height: 100%; background: var(--verde); border-radius: 99px; }
+  h3 { font-size: .95rem; margin: 18px 0 4px; }
+  .secao p { margin: 0; }
+  .alt { display: grid; grid-template-columns: 1fr 52px; gap: 4px 10px; align-items: center; font-size: .9rem; }
+  .alt .barra { grid-column: 1 / -1; margin-bottom: 8px; }
+  .alt .pct { text-align: right; color: var(--cinza); }
+  .aviso { background: var(--alerta-claro); border-radius: 10px; padding: 12px 14px; margin-top: 14px; font-size: .93rem; }
+  .erro { color: var(--alerta); font-weight: 600; }
+  footer { text-align: center; color: var(--cinza); font-size: .8rem; padding: 0 20px 30px; max-width: 560px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌱 Detector de doenças: soja e milho</h1>
+  <p>Tire uma foto de uma folha e descubra se ela tem alguma doença.</p>
+</header>
+
+<main>
+  <section class="card">
+    <div class="botoes">
+      <label class="btn" for="camera">📷 Tirar foto</label>
+      <label class="btn" for="galeria">🖼️ Galeria</label>
+    </div>
+    <input type="file" id="camera" accept="image/*" capture="environment">
+    <input type="file" id="galeria" accept="image/*">
+    <img id="previa" alt="Foto escolhida">
+    <p class="dica">Dica: fotografe <b>uma folha</b>, de perto, com boa luz e a folha ocupando a maior parte da foto.</p>
+    <button class="btn primario" id="analisar" disabled>Analisar folha</button>
+    <p class="dica" id="status-modelo">⏳ Carregando o modelo de IA...</p>
+  </section>
+
+  <section class="card" id="carregando">
+    <div class="spinner"></div>
+    Analisando a folha...
+  </section>
+
+  <section class="card" id="resultado"></section>
+</main>
+
+<footer>
+  Trabalho de Inovação · Modelo MobileNet treinado com imagens da Embrapa (Digipathos), Kaggle, Mendeley e ASDID.<br>
+  Ferramenta de apoio: <b>não substitui</b> a avaliação de um engenheiro agrônomo.
+</footer>
+
+<script src="ort.wasm.min.js"></script>
+<script src="dados.js"></script>
+<script>
+  const CULTURAS = { Milho: "🌽", Soja: "🫘" };
+  let arquivo = null;
+
+  for (const id of ["camera", "galeria"]) {
+    document.getElementById(id).addEventListener("change", (e) => {
+      if (!e.target.files.length) return;
+      arquivo = e.target.files[0];
+      const previa = document.getElementById("previa");
+      previa.src = URL.createObjectURL(arquivo);
+      previa.style.display = "block";
+      document.getElementById("analisar").disabled = !sessao;
+      document.getElementById("resultado").style.display = "none";
+      e.target.value = "";
+    });
+  }
+
+  // ---------------- Modelo rodando no próprio navegador (ONNX Runtime Web) ----------------
+  const CONFIANCA_MINIMA = 0.60;
+  ort.env.wasm.wasmPaths = "./";
+  ort.env.wasm.numThreads = 1;
+  let sessao = null;
+  ort.InferenceSession.create("modelo.onnx", { executionProviders: ["wasm"] })
+    .then((s) => {
+      sessao = s;
+      document.getElementById("status-modelo").textContent = "✅ Modelo pronto. A análise é feita no seu aparelho, a foto não é enviada para lugar nenhum.";
+      if (arquivo) document.getElementById("analisar").disabled = false;
+    })
+    .catch((e) => {
+      document.getElementById("status-modelo").innerHTML = `<span class="erro">Não foi possível carregar o modelo: ${esc(e.message)}</span>`;
+    });
+
+  function carregarImagem(file) {
+    return new Promise((ok, erro) => {
+      const img = new Image();
+      img.onload = () => ok(img);
+      img.onerror = () => erro(new Error("Não consegui abrir essa imagem. Envie uma foto em JPG ou PNG."));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  // Mesmo pré-processamento do treino: lado menor = 255 px, recorte central 224x224, normalização ImageNet
+  function preprocessar(img) {
+    const T = 224, R = Math.round(224 * 1.14);
+    const f = R / Math.min(img.width, img.height);
+    const w = Math.round(img.width * f), h = Math.round(img.height * f);
+    const c = document.createElement("canvas");
+    c.width = T; c.height = T;
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, (T - w) / 2, (T - h) / 2, w, h);
+    const px = ctx.getImageData(0, 0, T, T).data;
+    const media = [0.485, 0.456, 0.406], desvio = [0.229, 0.224, 0.225];
+    const dados = new Float32Array(3 * T * T);
+    for (let i = 0; i < T * T; i++) {
+      for (let k = 0; k < 3; k++) dados[k * T * T + i] = (px[i * 4 + k] / 255 - media[k]) / desvio[k];
+    }
+    return new ort.Tensor("float32", dados, [1, 3, T, T]);
+  }
+
+  async function analisarLocal(file) {
+    const img = await carregarImagem(file);
+    const saida = await sessao.run({ imagem: preprocessar(img) });
+    const logits = Array.from(saida.logits.data);
+    const max = Math.max(...logits);
+    const exps = logits.map((v) => Math.exp(v - max));
+    const soma = exps.reduce((a, b) => a + b, 0);
+    const probs = exps.map((v) => v / soma);
+    const ordem = probs.map((p, i) => i).sort((a, b) => probs[b] - probs[a]);
+    const principal = CLASSES[ordem[0]];
+    return {
+      classe: principal,
+      confianca: probs[ordem[0]],
+      certeza_suficiente: probs[ordem[0]] >= CONFIANCA_MINIMA,
+      info: DOENCAS[principal],
+      alternativas: ordem.slice(0, 3).map((i) => ({
+        classe: CLASSES[i], nome: DOENCAS[CLASSES[i]].nome, cultura: DOENCAS[CLASSES[i]].cultura, prob: probs[i],
+      })),
+    };
+  }
+
+  const pct = (p) => Math.round(p * 100) + "%";
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+  document.getElementById("analisar").addEventListener("click", async () => {
+    if (!arquivo) return;
+    const botao = document.getElementById("analisar");
+    const carregando = document.getElementById("carregando");
+    const res = document.getElementById("resultado");
+    botao.disabled = true; carregando.style.display = "block"; res.style.display = "none";
+
+    try {
+      res.innerHTML = montar(await analisarLocal(arquivo));
+    } catch (e) {
+      res.innerHTML = `<p class="erro">Não foi possível analisar a foto.</p><p>${esc(e.message)}</p>`;
+    } finally {
+      carregando.style.display = "none"; res.style.display = "block"; botao.disabled = !sessao;
+      res.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  });
+
+  function montar(d) {
+    const info = d.info || {};
+    const alternativas = d.alternativas.map((a) => `
+      <span>${CULTURAS[a.cultura] || ""} ${esc(a.nome)} <small style="color:var(--cinza)">(${esc(a.cultura)})</small></span>
+      <span class="pct">${pct(a.prob)}</span>
+      <div class="barra"><span style="width:${pct(a.prob)}"></span></div>`).join("");
+
+    if (!d.certeza_suficiente) {
+      return `
+        <span class="etiqueta incerto">Resultado incerto</span>
+        <h2>Não tenho certeza 🤔</h2>
+        <div class="aviso">A confiança ficou abaixo de 60%. Tente outra foto: mais perto da folha,
+          com boa luz e sem sombra. Lembre que o sistema só reconhece folhas de <b>soja</b> e <b>milho</b>.</div>
+        <h3>Possibilidades mais prováveis</h3>
+        <div class="alt">${alternativas}</div>`;
+    }
+
+    const doente = info.doente;
+    return `
+      <span class="etiqueta ${doente ? "doente" : "saudavel"}">${doente ? "Doença identificada" : "Saudável"}</span>
+      <h2>${CULTURAS[info.cultura] || ""} ${esc(info.nome)}</h2>
+      <p class="agente">${esc(info.cultura)}${info.agente ? " · " + esc(info.agente) : ""}</p>
+      <p class="confianca">Confiança: <b>${pct(d.confianca)}</b></p>
+      <div class="barra"><span style="width:${pct(d.confianca)}"></span></div>
+      <div class="secao"><h3>${doente ? "Sintomas" : "Avaliação"}</h3><p>${esc(info.sintomas)}</p></div>
+      <div class="secao"><h3>O que fazer</h3><p>${esc(info.recomendacao)}</p></div>
+      ${doente ? `<div class="aviso">Confirme o diagnóstico com um engenheiro agrônomo antes de aplicar qualquer produto.</div>` : ""}
+      <h3>Outras possibilidades</h3>
+      <div class="alt">${alternativas}</div>`;
+  }
+</script>
+</body>
+</html>
